@@ -1,0 +1,76 @@
+{
+  "name": "webhook-replay-guard",
+  "version": "0.0.0",
+  "description": "Verify HMAC-SHA256 webhook signatures in Node.js with timestamp tolerance, replay protection and secret rotation.",
+  "keywords": [
+    "webhook",
+    "hmac",
+    "signature",
+    "verify",
+    "replay",
+    "security",
+    "express",
+    "fastify"
+  ],
+  "author": "Gratus Antin George",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run lint && npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^20.17.0",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.4.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.18.0",
+    "vitest": "^3.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gratycodes/webhook-replay-guard.git"
+  },
+  "homepage": "https://github.com/gratycodes/webhook-replay-guard#readme",
+  "bugs": {
+    "url": "https://github.com/gratycodes/webhook-replay-guard/issues"
+  }
+}
