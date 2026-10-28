@@ -6,15 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-29
+
+Not yet published to npm.
+
 ### Added
 
-- Project scaffold: public types, function signatures, test suite, CI, docs.
-
-<!-- When the core is implemented, release as 0.1.0:
-## [0.1.0] - YYYY-MM-DD
-### Added
-- `computeSignature`, `parseSignatureHeader`, `safeCompareHex`, `verifyWebhook`.
-- `MemoryReplayStore` (in-memory LRU with TTL).
-- `expressWebhookMiddleware` and `fastifyRawBody` helpers.
-- Multiple secrets for rotation.
--->
+- `computeSignature`: HMAC-SHA256 over `` `${t}.` `` + raw body, hex output.
+- `parseSignatureHeader`: strict `t=` (digits only, exactly once), multiple `v1=` values,
+  unknown schemes ignored.
+- `safeCompareHex`: constant-time comparison via `crypto.timingSafeEqual`; returns `false`
+  instead of throwing on length mismatch or invalid hex.
+- `verifyWebhook`: secrets, body, header, timestamp window (both directions), signature against
+  every secret (rotation, reports `secretIndex`), then replay check by delivery ID.
+- `MemoryReplayStore`: in-memory LRU with TTL (`maxEntries` default 10,000), plus the
+  `ReplayStore` interface for shared stores such as Redis (`SET NX EX`).
+- `expressWebhookMiddleware` (after `express.raw()`) and `fastifyRawBody` helpers.
+- `signWebhook` helper for senders and tests.
+- Dual ESM/CJS build with type declarations; Node.js 18+; no runtime dependencies.

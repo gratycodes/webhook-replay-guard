@@ -1,6 +1,6 @@
 {
   "name": "webhook-replay-guard",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Verify HMAC-SHA256 webhook signatures in Node.js with timestamp tolerance, replay protection and secret rotation.",
   "keywords": [
     "webhook",

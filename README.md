@@ -4,7 +4,7 @@ Verify signed webhooks in Node.js: HMAC-SHA256 over timestamp and raw body, cons
 comparison, a timestamp tolerance window, replay protection by delivery ID and several secrets
 at once for rotation. No runtime dependencies. ESM and CommonJS. Node.js 18+.
 
-> Status: pre-release (0.0.0). The API below is the target; the implementation is in progress.
+> Status: 0.1.0, not yet published to npm.
 
 ## Install
 

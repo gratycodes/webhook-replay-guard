@@ -14,9 +14,6 @@
  *
  *   signed payload = `${t}.` + raw body bytes
  *   v1             = hex( HMAC-SHA256(secret, signed payload) )
- *
- * SCAFFOLD: every function marked `TODO: implement` is for you to write.
- * GUIDE.md walks through each one; the tests in test/ define the expected behaviour.
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
@@ -37,10 +34,11 @@ export const DEFAULT_ID_HEADER = 'x-webhook-id';
 /** Default maximum number of IDs held by MemoryReplayStore. */
 export const DEFAULT_REPLAY_STORE_MAX_ENTRIES = 10_000;
 
-// Keep the crypto imports referenced so the stubs typecheck and lint cleanly.
-// Delete this line once computeSignature and safeCompareHex use them.
-void createHmac;
-void timingSafeEqual;
+/** Even-length hex (case-insensitive). Empty string matches; length is checked separately. */
+const HEX_RE = /^(?:[0-9a-f]{2})*$/i;
+
+/** A Unix timestamp in the header: digits only (rejects `1.5`, `-1`, `1e9`, `0x10`). */
+const DIGITS_RE = /^\d+$/;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -120,7 +118,7 @@ export interface VerifiedWebhook {
 }
 
 // ---------------------------------------------------------------------------
-// Errors (implemented: not part of the exercise)
+// Errors
 // ---------------------------------------------------------------------------
 
 export class WebhookVerificationError extends Error {
@@ -137,10 +135,6 @@ export function isWebhookVerificationError(err: unknown): err is WebhookVerifica
   return err instanceof WebhookVerificationError;
 }
 
-function todo(name: string): never {
-  throw new Error(`TODO: implement ${name}`);
-}
-
 // ---------------------------------------------------------------------------
 // Core: signature
 // ---------------------------------------------------------------------------
@@ -148,55 +142,75 @@ function todo(name: string): never {
 /**
  * Compute the hex HMAC-SHA256 signature for a payload.
  *
- * TODO: implement
- *  1. Build the signed payload as BYTES: the ASCII string `${timestamp}.` followed by the raw body bytes.
- *     - If rawBody is a string, encode it as UTF-8. If it is a Uint8Array/Buffer, use it as-is.
- *     - Do NOT JSON.parse / JSON.stringify anything: one changed space breaks the signature.
- *     - Tip: `hmac.update(prefix); hmac.update(body)` avoids copying with Buffer.concat.
- *  2. `createHmac('sha256', secret)` accepts a string or Uint8Array secret directly.
- *  3. Return `digest('hex')` (64 lower-case hex characters).
- *  4. Validate `timestamp` is a finite, non-negative integer; otherwise throw a TypeError.
+ * The signed bytes are the ASCII string `${timestamp}.` followed by the raw body. Binding the
+ * timestamp into the MAC means it cannot be changed without invalidating the signature.
+ *
+ * @throws TypeError if `timestamp` is not a non-negative integer.
  */
-export function computeSignature(
-  _secret: SecretInput,
-  _timestamp: number,
-  _rawBody: RawBody,
-): string {
-  return todo('computeSignature');
+export function computeSignature(secret: SecretInput, timestamp: number, rawBody: RawBody): string {
+  if (!Number.isInteger(timestamp) || timestamp < 0) {
+    throw new TypeError(`timestamp must be a non-negative integer, got ${String(timestamp)}`);
+  }
+  // HMAC (not a plain hash of secret + body) avoids length-extension attacks.
+  const hmac = createHmac('sha256', secret);
+  // Two update() calls avoid copying the body into a new concatenated buffer.
+  hmac.update(`${timestamp}.`);
+  hmac.update(typeof rawBody === 'string' ? Buffer.from(rawBody, 'utf8') : rawBody);
+  return hmac.digest('hex');
 }
 
 /**
  * Parse `t=1730000000,v1=abc...,v1=def...`.
  *
- * TODO: implement
- *  1. Split on ',' then each part on the FIRST '=' only; trim whitespace around keys and values.
- *  2. `t`: must appear exactly once and be all digits (/^\d+$/). Convert with Number().
- *  3. `v1`: may appear several times (sender-side rotation). Lower-case each value and keep it
- *     only if it is non-empty. Do not reject odd-length or non-hex values here: safeCompareHex
- *     handles them, and a bad value must still end as INVALID_SIGNATURE, not a crash.
- *  4. Ignore other keys (e.g. `v0`) so the format can evolve.
- *  5. Throw WebhookVerificationError('MALFORMED_HEADER') when: there is no valid `t`, `t` repeats,
- *     or there are no `v1` values.
+ * - `t` must appear exactly once and be all digits.
+ * - `v1` may appear several times (sender-side rotation); values are lower-cased.
+ *   Hex is not validated here: a bad value must end as INVALID_SIGNATURE, not a parse error.
+ * - Other keys (e.g. `v0`) are ignored so the format can evolve.
+ *
+ * @throws WebhookVerificationError('MALFORMED_HEADER')
  */
-export function parseSignatureHeader(_header: string): ParsedSignatureHeader {
-  return todo('parseSignatureHeader');
+export function parseSignatureHeader(header: string): ParsedSignatureHeader {
+  let timestamp: number | undefined;
+  let timestampCount = 0;
+  const signatures: string[] = [];
+
+  for (const part of header.split(',')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    // Split on the FIRST '=' only; trim so `t = 1 , v1 = x` is accepted.
+    const key = part.slice(0, eq).trim();
+    const value = part.slice(eq + 1).trim();
+
+    if (key === 't') {
+      timestampCount += 1;
+      if (DIGITS_RE.test(value)) timestamp = Number(value);
+    } else if (key === SIGNATURE_SCHEME && value !== '') {
+      signatures.push(value.toLowerCase());
+    }
+  }
+
+  // A repeated `t` is rejected so an attacker cannot smuggle a second timestamp in.
+  if (timestampCount !== 1 || timestamp === undefined || !Number.isSafeInteger(timestamp)) {
+    throw new WebhookVerificationError('MALFORMED_HEADER', 'missing or invalid timestamp (t=)');
+  }
+  if (signatures.length === 0) {
+    throw new WebhookVerificationError('MALFORMED_HEADER', `no ${SIGNATURE_SCHEME}= signature`);
+  }
+  return { timestamp, signatures };
 }
 
 /**
  * Constant-time comparison of two hex strings.
  *
- * TODO: implement
- *  1. If either string is not even-length hex (/^[0-9a-f]*$/i), return false.
- *  2. Decode both with Buffer.from(x, 'hex').
- *  3. crypto.timingSafeEqual THROWS a RangeError when lengths differ, so check
- *     `a.length !== b.length` first and return false. (Length is not secret: every
- *     valid SHA-256 hex signature is 64 characters long.)
- *  4. Return timingSafeEqual(bufA, bufB).
- *  Never use `===` on signatures: it returns as soon as a character differs, so
- *  response time reveals how many leading characters were right.
+ * Returns `false` (never throws) on invalid hex or a length mismatch. Length is not secret:
+ * every valid SHA-256 hex signature is 64 characters long.
  */
-export function safeCompareHex(_a: string, _b: string): boolean {
-  return todo('safeCompareHex');
+export function safeCompareHex(a: string, b: string): boolean {
+  if (!HEX_RE.test(a) || !HEX_RE.test(b)) return false;
+  // timingSafeEqual throws a RangeError on different lengths, so check first.
+  if (a.length !== b.length) return false;
+  // Comparing decoded bytes makes upper- and lower-case hex equal.
+  return timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'));
 }
 
 // ---------------------------------------------------------------------------
@@ -206,38 +220,80 @@ export function safeCompareHex(_a: string, _b: string): boolean {
 /**
  * Verify a webhook. Resolves with details on success; rejects with WebhookVerificationError.
  *
- * TODO: implement, in THIS order (the order matters; see GUIDE.md):
- *  1. Normalise `options.secrets` to an array. Empty array: throw NO_SECRETS.
- *  2. rawBody must be a string or Uint8Array: else throw INVALID_BODY
- *     (a plain object means a JSON body parser ran first).
- *  3. Missing or empty signatureHeader: throw MISSING_HEADER.
- *  4. parseSignatureHeader (throws MALFORMED_HEADER).
- *  5. Timestamp window, with now = Math.floor((options.now ?? Date.now)() / 1000)
- *     and tolerance = options.toleranceSeconds ?? DEFAULT_TOLERANCE_SECONDS:
- *       timestamp < now - tolerance: TIMESTAMP_TOO_OLD
- *       timestamp > now + tolerance: TIMESTAMP_IN_FUTURE
- *     (Exactly on the boundary is accepted.)
- *  6. For each secret (index i), compute the expected signature once, then compare it with
- *     EVERY provided signature using safeCompareHex. The first match sets secretIndex = i.
- *     No match: throw INVALID_SIGNATURE.
- *  7. Only AFTER the signature is valid, replay check if `input.id` is a non-empty string and
- *     options.replayStore !== false:
- *       store = options.replayStore ?? getDefaultReplayStore()
- *       ttl   = 2 * tolerance (the id must be remembered for as long as the timestamp could still pass)
- *       if (!(await store.markIfNew(id, ttl))) throw REPLAYED
- *     Checking replay before the signature would let an attacker burn real IDs with forged requests.
- *  8. Return { timestamp, id, secretIndex } (omit `id` when none was given).
+ * Order of checks (it matters):
+ *  1. configuration and input shape (cheap)
+ *  2. header parse
+ *  3. timestamp window
+ *  4. signature against every secret (rotation)
+ *  5. replay check, only once the request is proven authentic, so forged requests cannot
+ *     "burn" real delivery IDs
  */
 export async function verifyWebhook(
-  _input: VerifyInput,
-  _options: VerifyOptions,
+  input: VerifyInput,
+  options: VerifyOptions,
 ): Promise<VerifiedWebhook> {
-  return todo('verifyWebhook');
+  const secrets: readonly SecretInput[] = isSecretList(options.secrets)
+    ? options.secrets
+    : [options.secrets];
+  if (secrets.length === 0) {
+    throw new WebhookVerificationError('NO_SECRETS', 'at least one secret is required');
+  }
+
+  // A plain object here means a JSON body parser already replaced the bytes.
+  const { rawBody, signatureHeader } = input;
+  if (typeof rawBody !== 'string' && !(rawBody instanceof Uint8Array)) {
+    throw new WebhookVerificationError('INVALID_BODY', 'rawBody must be a string or Buffer');
+  }
+
+  if (!signatureHeader) {
+    throw new WebhookVerificationError('MISSING_HEADER', 'signature header is missing');
+  }
+  const { timestamp, signatures } = parseSignatureHeader(signatureHeader);
+
+  // Clock skew is allowed in both directions; exactly on the boundary is accepted.
+  const tolerance = options.toleranceSeconds ?? DEFAULT_TOLERANCE_SECONDS;
+  const nowSeconds = Math.floor((options.now ?? Date.now)() / 1000);
+  if (timestamp < nowSeconds - tolerance) {
+    throw new WebhookVerificationError('TIMESTAMP_TOO_OLD', 'timestamp outside tolerance');
+  }
+  if (timestamp > nowSeconds + tolerance) {
+    throw new WebhookVerificationError('TIMESTAMP_IN_FUTURE', 'timestamp outside tolerance');
+  }
+
+  // Each secret's expected signature is computed once and compared with every provided one.
+  const secretIndex = secrets.findIndex((secret) => {
+    const expected = computeSignature(secret, timestamp, rawBody);
+    return signatures.some((candidate) => safeCompareHex(expected, candidate));
+  });
+  if (secretIndex === -1) {
+    throw new WebhookVerificationError('INVALID_SIGNATURE', 'no matching signature');
+  }
+
+  const id = input.id;
+  if (typeof id !== 'string' || id === '') {
+    return { timestamp, secretIndex };
+  }
+
+  if (options.replayStore !== false) {
+    const store = options.replayStore ?? getDefaultReplayStore();
+    // A request is acceptable for 2 x tolerance of receiver time, so remember the id that long.
+    const isNew = await store.markIfNew(id, 2 * tolerance);
+    if (!isNew) {
+      throw new WebhookVerificationError('REPLAYED', 'delivery id already processed');
+    }
+  }
+  return { timestamp, id, secretIndex };
+}
+
+/** Narrow `SecretInput | readonly SecretInput[]` (Array.isArray does not narrow readonly arrays). */
+function isSecretList(
+  value: SecretInput | readonly SecretInput[],
+): value is readonly SecretInput[] {
+  return Array.isArray(value);
 }
 
 /**
  * Build a signature header for a payload (sender side, and handy in tests).
- * Implemented on top of computeSignature, so it works once that does.
  */
 export function signWebhook(
   rawBody: RawBody,
@@ -264,36 +320,52 @@ export interface MemoryReplayStoreOptions {
 /**
  * Single-process replay store. Use a shared store (Redis etc.) when you run several instances.
  *
- * TODO: implement
- *  - Keep a `Map<string, number>` of id -> expiresAtMs. A JS Map iterates in insertion order,
- *    so the first key is the oldest: that gives an LRU cheaply.
- *  - markIfNew(id, ttlSeconds):
- *      1. now = this.now(); look up id.
- *      2. Present and not expired: delete and re-insert it (marks it most recently used), return false.
- *      3. Present but expired: delete it and treat as new.
- *      4. New: set(id, now + ttlSeconds * 1000). While size > maxEntries, delete the first key.
- *         Return true.
- *  - size: number of entries currently held (expired entries may still count until touched).
- *  - Validate maxEntries is a positive integer in the constructor (TypeError otherwise).
+ * A JS Map iterates in insertion order, so deleting and re-inserting a key moves it to the end,
+ * and the first key is always the least recently used: an O(1) LRU without a linked list.
+ * Expired entries are dropped lazily when touched or evicted.
  */
 export class MemoryReplayStore implements ReplayStore {
   readonly maxEntries: number;
   private readonly now: () => number;
+  /** id -> expiry time in epoch milliseconds. */
   private readonly entries = new Map<string, number>();
 
   constructor(options: MemoryReplayStoreOptions = {}) {
-    this.maxEntries = options.maxEntries ?? DEFAULT_REPLAY_STORE_MAX_ENTRIES;
+    const maxEntries = options.maxEntries ?? DEFAULT_REPLAY_STORE_MAX_ENTRIES;
+    if (!Number.isInteger(maxEntries) || maxEntries < 1) {
+      throw new TypeError(`maxEntries must be a positive integer, got ${String(maxEntries)}`);
+    }
+    this.maxEntries = maxEntries;
     this.now = options.now ?? Date.now;
   }
 
-  markIfNew(_id: string, _ttlSeconds: number): boolean {
-    void this.now;
-    void this.entries;
-    return todo('MemoryReplayStore.markIfNew');
+  markIfNew(id: string, ttlSeconds: number): boolean {
+    const now = this.now();
+    const expiresAt = this.entries.get(id);
+
+    if (expiresAt !== undefined && expiresAt > now) {
+      // Seen and still live: a replay. Refresh recency (keep the original expiry).
+      this.entries.delete(id);
+      this.entries.set(id, expiresAt);
+      return false;
+    }
+
+    // New, or seen but expired: (re)record it as the most recently used entry.
+    this.entries.delete(id);
+    this.entries.set(id, now + ttlSeconds * 1000);
+
+    // Bound memory: evict least recently used entries (the oldest keys in the Map).
+    while (this.entries.size > this.maxEntries) {
+      const oldest = this.entries.keys().next();
+      if (oldest.done) break;
+      this.entries.delete(oldest.value);
+    }
+    return true;
   }
 
+  /** Entries currently held (expired entries count until they are touched or evicted). */
   get size(): number {
-    return todo('MemoryReplayStore.size');
+    return this.entries.size;
   }
 }
 
@@ -328,21 +400,46 @@ export interface MiddlewareOptions extends VerifyOptions {
   idHeader?: string;
 }
 
+/** Node exposes repeated headers as arrays; use the first value. */
+function firstHeader(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 /**
  * Express middleware. Mount it AFTER `express.raw({ type: 'application/json' })` on the webhook
  * route only, so `req.body` is the raw Buffer.
  *
- * TODO: implement. Return `async (req, res, next) => { ... }` that:
- *  1. Reads the headers (lower-case names; if a header value is an array, use the first item).
- *  2. Calls verifyWebhook({ rawBody: req.body, signatureHeader, id }, options).
- *  3. Success: sets req.webhook = result and calls next() with no arguments.
- *  4. WebhookVerificationError: res.status(400).json({ error: err.code }) and does NOT call next.
- *  5. Any other error: next(err).
+ * On success sets `req.webhook` and calls `next()`. On a verification failure responds
+ * `400 { error: <code> }`. Any other error is passed to `next(err)`.
  */
 export function expressWebhookMiddleware(
-  _options: MiddlewareOptions,
+  options: MiddlewareOptions,
 ): (req: ExpressLikeRequest, res: ExpressLikeResponse, next: ExpressLikeNext) => Promise<void> {
-  return todo('expressWebhookMiddleware');
+  const signatureHeaderName = (options.signatureHeader ?? DEFAULT_SIGNATURE_HEADER).toLowerCase();
+  const idHeaderName = (options.idHeader ?? DEFAULT_ID_HEADER).toLowerCase();
+
+  return async (req, res, next) => {
+    try {
+      req.webhook = await verifyWebhook(
+        {
+          // Validated inside verifyWebhook (INVALID_BODY if a JSON parser already ran).
+          rawBody: req.body as RawBody,
+          signatureHeader: firstHeader(req.headers[signatureHeaderName]),
+          id: firstHeader(req.headers[idHeaderName]) ?? null,
+        },
+        options,
+      );
+    } catch (err) {
+      if (isWebhookVerificationError(err)) {
+        res.status(400).json({ error: err.code });
+        return;
+      }
+      next(err);
+      return;
+    }
+    // Called outside the try so errors thrown by later handlers are not reported as 400s.
+    next();
+  };
 }
 
 /** Minimal Fastify shapes. */
@@ -365,16 +462,28 @@ export interface FastifyLike {
 /**
  * Register a JSON parser on a Fastify instance (or encapsulated plugin scope) that keeps the
  * raw bytes on `request.rawBody` and still gives handlers the parsed JSON as `request.body`.
- *
- * TODO: implement
- *  1. Call fastify.addContentTypeParser(contentTypes ?? 'application/json', { parseAs: 'buffer' }, parser).
- *  2. parser(req, body, done): set req.rawBody = body; then try JSON.parse(body.toString('utf8')).
- *       success: done(null, parsed)
- *       failure: done(error) with the error's statusCode set to 400
- *     An empty body should parse to `undefined` rather than failing.
- *  Register it inside the plugin that holds the webhook route so other routes keep Fastify's
- *  default parser. In the route, call verifyWebhook({ rawBody: request.rawBody, ... }).
+ * Register it inside the plugin that holds the webhook route so other routes keep the default.
  */
-export function fastifyRawBody(_fastify: FastifyLike, _contentTypes?: string | string[]): void {
-  todo('fastifyRawBody');
+export function fastifyRawBody(fastify: FastifyLike, contentTypes?: string | string[]): void {
+  fastify.addContentTypeParser(
+    contentTypes ?? 'application/json',
+    { parseAs: 'buffer' },
+    (req, body, done) => {
+      req.rawBody = body;
+      if (body.length === 0) {
+        done(null, undefined);
+        return;
+      }
+      try {
+        done(null, JSON.parse(body.toString('utf8')));
+      } catch (err) {
+        // Answer malformed JSON with 400, not 500.
+        const error = (err instanceof Error ? err : new Error(String(err))) as Error & {
+          statusCode?: number;
+        };
+        error.statusCode = 400;
+        done(error);
+      }
+    },
+  );
 }

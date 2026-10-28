@@ -230,7 +230,5 @@ All 70 tests should pass. Then:
 1. Add a few tests of your own (e.g. a Redis-backed store, a very large body).
 2. Update `CHANGELOG.md` (0.1.0) and remove the "pre-release" note in the README.
 3. Create the GitHub repo, push, and let CI run on Node 18/20/22.
-4. Publishing: `npm login`, then `npm publish --access public` (scoped packages are private by
-   default). The `@gratycodes` scope must exist first: create the npm user or org `gratycodes`.
-   If you prefer an unscoped name, `webhook-replay-guard` was available on 2026-10-29.
-   Consider `npm publish --provenance` from GitHub Actions later.
+4. Publishing: `npm login`, then `npm publish` (the unscoped name `webhook-replay-guard` was
+   available on 2026-10-29). Consider `npm publish --provenance` from GitHub Actions later.
